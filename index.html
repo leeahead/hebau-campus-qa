@@ -20,6 +20,8 @@
     </div>
     <div class="header-actions">
       <span class="ai-status" id="aiStatus"><i class="status-dot"></i><span id="aiStatusText">AI 就绪</span></span>
+      <button class="icon-btn" id="btnNewChat" aria-label="新建对话" title="新建对话"></button>
+      <button class="icon-btn" id="btnChats" aria-label="历史对话" title="历史对话"></button>
       <button class="icon-btn" id="btnSettings" aria-label="设置" title="设置"></button>
     </div>
   </header>
@@ -89,6 +91,19 @@
     <button class="tab-btn" data-tab="kb"><span class="tab-ico" data-icon="book"></span><span>知识库</span></button>
   </nav>
 
+</div>
+
+<!-- 历史对话抽屉 -->
+<div class="drawer-mask hidden" id="chatsMask">
+  <aside class="drawer" id="chatsDrawer">
+    <div class="drawer-head">
+      <h3>历史对话</h3>
+      <button class="icon-btn" id="closeChats" aria-label="关闭"></button>
+    </div>
+    <button class="new-chat-btn" id="drawerNewChat"></button>
+    <div class="chat-list" id="chatList"></div>
+    <div class="drawer-foot" id="chatsFoot"></div>
+  </aside>
 </div>
 
 <!-- 设置（高级选项，AI 已内置无需填写） -->

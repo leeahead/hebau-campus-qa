@@ -24,7 +24,7 @@
   };
 
   function load(k,d){ try{ var v=localStorage.getItem(k); return v?JSON.parse(v):d; }catch(e){ return d; } }
-  function save(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); }catch(e){} }
+  function save(k,v){ try{ localStorage.setItem(k,JSON.stringify(v)); return true; }catch(e){ return false; } }
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   function $(id){ return document.getElementById(id); }
   function toast(msg){
@@ -33,11 +33,55 @@
   }
   function scrollChat(){ var c=$('chatScroll'); if(c) c.scrollTop=c.scrollHeight; }
 
+  /* ---------- 多会话本地持久化 ---------- */
+  var SESSION_KEY='hebau_chats_v1';
+  var sessions=load(SESSION_KEY,null);
+  function newSessionObj(){
+    return {id:'c'+Date.now()+'_'+Math.random().toString(36).slice(2,7),title:'新对话',
+      created:Date.now(),updated:Date.now(),html:'',aiHistory:[],
+      context:{lastItem:null,lastCategory:null,lastTopic:null,turns:0},hasChat:false};
+  }
+  if(!sessions || !sessions.list || !sessions.list.length){
+    var s0=newSessionObj(); sessions={list:[s0],currentId:s0.id};
+  }
+  if(!sessions.list.some(function(s){return s.id===sessions.currentId;})) sessions.currentId=sessions.list[0].id;
+  function currentSession(){
+    return sessions.list.filter(function(s){return s.id===sessions.currentId;})[0]||sessions.list[0];
+  }
+  function saveSessions(){
+    if(save(SESSION_KEY,sessions)) return;
+    while(sessions.list.length>1){
+      sessions.list.pop();
+      if(save(SESSION_KEY,sessions)) return;
+    }
+  }
+  function persistCurrent(){
+    var s=currentSession();
+    s.html=$('chatLog').innerHTML;
+    s.aiHistory=state.aiHistory.slice(-16);
+    s.context={lastItem:state.context.lastItem,lastCategory:state.context.lastCategory,
+      lastTopic:state.context.lastTopic,turns:state.context.turns};
+    s.hasChat=$('welcome').style.display==='none';
+    s.updated=Date.now();
+    saveSessions();
+  }
+  function timeAgo(ts){
+    var d=Date.now()-(ts||Date.now());
+    if(d<60000) return '刚刚';
+    if(d<3600000) return Math.floor(d/60000)+' 分钟前';
+    if(d<86400000) return Math.floor(d/3600000)+' 小时前';
+    var dt=new Date(ts); return (dt.getMonth()+1)+'月'+dt.getDate()+'日';
+  }
+
   /* ---------- 静态图标 ---------- */
   function paintIcons(){
     $('brandMark').innerHTML=icon('logo');
     $('welcomeMark').innerHTML=icon('sparkle');
     $('btnSend').innerHTML=icon('send');
+    $('btnNewChat').innerHTML=icon('plus');
+    $('btnChats').innerHTML=icon('list');
+    $('closeChats').innerHTML=icon('close');
+    $('drawerNewChat').innerHTML=icon('plus')+'<span>新建对话</span>';
     $('btnSettings').innerHTML=icon('settings');
     $('closeSettings').innerHTML=icon('close');
     $('closeFeedback').innerHTML=icon('close');
@@ -251,35 +295,45 @@
       +'<textarea placeholder="请输入你认为正确的信息…"></textarea>'
       +'<div class="row"><button class="mini-btn cf-cancel">取消</button><button class="btn-primary cf-submit" data-id="'+esc(it.id)+'">提交纠错</button></div></div>';
     h+='</div></div>';
-    d.innerHTML=h; $('chatLog').appendChild(d); wireAnswerActions(d,it); scrollChat();
+    d.innerHTML=h; $('chatLog').appendChild(d); scrollChat(); persistCurrent();
   }
 
-  function wireAnswerActions(root,it){
-    Array.prototype.forEach.call(root.querySelectorAll('.act-detail'),function(b){
-      b.onclick=function(){ openDetail(b.getAttribute('data-id')); };
-    });
-    Array.prototype.forEach.call(root.querySelectorAll('.act-help'),function(b){
-      b.onclick=function(){
-        var v=parseInt(b.getAttribute('data-val'),10);
-        state.helpful[it.id]=v; save('hebau_helpful',state.helpful);
+  /* 消息区统一事件委托：恢复的消息 DOM 也能正常交互 */
+  function bindChatDelegates(){
+    $('chatLog').addEventListener('click',function(e){
+      var b=e.target.closest('button, .ai-ref, .follow-chip');
+      if(!b || !$('chatLog').contains(b)) return;
+      if(b.classList.contains('act-detail')||b.classList.contains('ai-ref')){
+        openDetail(b.getAttribute('data-id')); return;
+      }
+      if(b.classList.contains('act-help')){
+        var id=b.getAttribute('data-id'), v=parseInt(b.getAttribute('data-val'),10);
+        var box=b.closest('.bubble');
+        state.helpful[id]=v; save('hebau_helpful',state.helpful);
         toast(v===1?'感谢反馈':'已记录，感谢反馈');
-        Array.prototype.forEach.call(root.querySelectorAll('.act-help'),function(x){x.classList.remove('on');});
-        b.classList.add('on');
-      };
+        Array.prototype.forEach.call(box.querySelectorAll('.act-help'),function(x){x.classList.remove('on');});
+        b.classList.add('on'); persistCurrent(); return;
+      }
+      if(b.classList.contains('act-correct')){
+        var cf=b.closest('.bubble').querySelector('.correct-form');
+        if(cf) cf.classList.toggle('show'); return;
+      }
+      if(b.classList.contains('cf-cancel')){ b.closest('.correct-form').classList.remove('show'); return; }
+      if(b.classList.contains('cf-submit')){
+        var form=b.closest('.correct-form'), v2=form.querySelector('textarea').value.trim();
+        if(!v2){ toast('请填写纠错内容'); return; }
+        state.corrections[b.getAttribute('data-id')]=v2;
+        save('hebau_corrections',state.corrections);
+        form.classList.remove('show'); toast('纠错已提交，待管理员核实');
+        appendBotNote('已记录你的纠错，答案上方会显示「用户纠错」标记。正式修正需管理员核实后更新知识库。');
+        return;
+      }
+      if(b.classList.contains('ai-help')){ b.classList.add('on'); toast('感谢反馈'); persistCurrent(); return; }
+      if(b.classList.contains('ai-feedback')){
+        openFeedback(); $('fbText').value='AI 回答反馈（问题：'+(b.getAttribute('data-q')||'')+'）\n'; return;
+      }
+      if(b.classList.contains('follow-chip')){ send(b.getAttribute('data-q')); return; }
     });
-    var form=root.querySelector('.correct-form');
-    var correctBtn=root.querySelector('.act-correct');
-    if(correctBtn) correctBtn.onclick=function(){ form.classList.toggle('show'); };
-    var cancel=root.querySelector('.cf-cancel'); if(cancel) cancel.onclick=function(){form.classList.remove('show');};
-    var submit=root.querySelector('.cf-submit');
-    if(submit) submit.onclick=function(){
-      var v=form.querySelector('textarea').value.trim();
-      if(!v){ toast('请填写纠错内容'); return; }
-      state.corrections[it.id]=v; save('hebau_corrections',state.corrections);
-      form.classList.remove('show');
-      toast('纠错已提交，待管理员核实');
-      appendBotNote('已记录你对「'+it.topic+'」的纠错，答案上方会显示「用户纠错」标记。正式修正需管理员核实后更新知识库。');
-    };
   }
 
   function appendFollowUps(it){
@@ -290,11 +344,7 @@
       +'<div class="follow-row"><div class="fl">你还可以接着问：</div>';
     sib.forEach(function(s){ h+='<span class="follow-chip" data-q="'+esc(s.topic)+'">'+esc(s.topic)+'</span>'; });
     h+='</div></div></div>';
-    d.innerHTML=h; $('chatLog').appendChild(d);
-    Array.prototype.forEach.call(d.querySelectorAll('.follow-chip'),function(c){
-      c.onclick=function(){ send(c.getAttribute('data-q')); };
-    });
-    scrollChat();
+    d.innerHTML=h; $('chatLog').appendChild(d); scrollChat(); persistCurrent();
   }
 
   function appendDontKnow(raw){
@@ -307,13 +357,13 @@
       +'<div>① 查学校官网 <a href="http://www.hebau.edu.cn/" target="_blank" rel="noopener">www.hebau.edu.cn</a> 或官方微信公众号；</div>'
       +'<div>② 到知识库标签页按分类浏览核实；</div>'
       +'<div>③ 在设置里的「意见反馈」告诉我，纳入后续更新。</div></div></div></div>';
-    d.innerHTML=h; $('chatLog').appendChild(d); scrollChat();
+    d.innerHTML=h; $('chatLog').appendChild(d); scrollChat(); persistCurrent();
   }
 
   function appendBotNote(text){
     var d=document.createElement('div'); d.className='msg bot local';
     d.innerHTML='<div class="avatar">'+icon('info')+'</div><div class="bubble" style="font-size:12.5px;color:#4b5b52">'+esc(text)+'</div>';
-    $('chatLog').appendChild(d); scrollChat();
+    $('chatLog').appendChild(d); scrollChat(); persistCurrent();
   }
 
   /* ---------- AI 问答 ---------- */
@@ -323,7 +373,7 @@
       .replace(/(^|\n)\s*[-•]\s+/g,'$1• ')
       .replace(/\n/g,'<br>');
   }
-  function appendAIBubble(){
+  function appendAIBubble(question){
     var d=document.createElement('div'); d.className='msg bot ai-answer';
     var h='<div class="avatar">'+icon('sparkle')+'</div><div class="bubble">'
       +'<div class="status-line" style="margin-top:0;margin-bottom:8px"><span class="st st-ai">'+icon('sparkle')+'AI 回答 · 依据官网资料</span></div>'
@@ -332,7 +382,7 @@
       +'<div class="ans-actions hidden">'
       +'<button class="mini-btn ai-help" data-val="1">'+icon('thumbUp')+'有用</button>'
       +'<button class="mini-btn ai-help" data-val="-1">'+icon('thumbDown')+'不准确</button>'
-      +'<button class="mini-btn ai-feedback">'+icon('edit')+'反馈</button></div>'
+      +'<button class="mini-btn ai-feedback" data-q="'+esc(question||'')+'">'+icon('edit')+'反馈</button></div>'
       +'</div></div>';
     d.innerHTML=h; $('chatLog').appendChild(d); scrollChat();
     var contentEl=d.querySelector('.ai-content'), first=true;
@@ -348,19 +398,12 @@
             html+='<span class="ai-ref" data-id="'+esc(it.id)+'">'+esc(it.topic)+' · '+esc(it.id)+'</span>';
           });
           list.innerHTML=html;
-          Array.prototype.forEach.call(list.querySelectorAll('.ai-ref'),function(r){
-            r.onclick=function(){ openDetail(r.getAttribute('data-id')); };
-          });
         }
         state.aiHistory.push({role:'user',content:question});
         state.aiHistory.push({role:'assistant',content:res.text||''});
         if(state.aiHistory.length>16) state.aiHistory=state.aiHistory.slice(-16);
-        var acts=d.querySelector('.ans-actions'); acts.classList.remove('hidden');
-        Array.prototype.forEach.call(acts.querySelectorAll('.ai-help'),function(b){
-          b.onclick=function(){ b.classList.add('on'); toast('感谢反馈'); };
-        });
-        acts.querySelector('.ai-feedback').onclick=function(){ openFeedback(); $('fbText').value='AI 回答反馈（问题：'+question+'）\n'; };
-        scrollChat();
+        d.querySelector('.ans-actions').classList.remove('hidden');
+        scrollChat(); persistCurrent();
       },
       fail:function(res,question){
         var msg= res.reason==='disabled' ? 'AI 模式未启用'
@@ -371,11 +414,12 @@
         appendBotNote('以下为【本地检索】答案（未经过 AI）：');
         answer(question);
         if(window.HebauAI) window.HebauAI.updateBadge();
+        persistCurrent();
       }
     };
   }
   function sendAI(text){
-    var bubble=appendAIBubble();
+    var bubble=appendAIBubble(text);
     window.HebauAI.ask(text,state.aiHistory,bubble.token,function(res){
       if(res.ok) bubble.finish(res,text); else bubble.fail(res,text);
     });
@@ -392,6 +436,9 @@
     if(state.tab!=='chat') switchTab('chat');
     $('welcome').style.display='none';
     appendUser(text);
+    var s=currentSession();
+    if(s.title==='新对话') s.title=text.slice(0,14)+(text.length>14?'…':'');
+    persistCurrent();
     $('qInput').value=''; autoGrow();
     var btn=$('btnSend'); btn.disabled=true;
     setTimeout(function(){
@@ -422,6 +469,62 @@
     toast('反馈已导出');
   }
 
+  /* ---------- 会话抽屉 ---------- */
+  function renderChatList(){
+    var h='';
+    sessions.list.forEach(function(s){
+      var count=((s.html||'').match(/class="msg /g)||[]).length;
+      h+='<div class="chat-row'+(s.id===sessions.currentId?' active':'')+'" data-id="'+esc(s.id)+'">'
+        +'<div class="chat-row-main"><span class="chat-row-title">'+esc(s.title||'新对话')+'</span>'
+        +'<span class="chat-row-meta">'+timeAgo(s.updated)+' · '+count+' 条消息</span></div>'
+        +'<button class="chat-del" data-del="'+esc(s.id)+'" aria-label="删除对话">'+icon('trash')+'</button></div>';
+    });
+    $('chatList').innerHTML=h||'<div class="empty-list">暂无对话</div>';
+    $('chatsFoot').textContent='共 '+sessions.list.length+' 个对话 · 仅保存在本机浏览器';
+  }
+  function closeChats(){ $('chatsMask').classList.add('hidden'); }
+  function openChats(){ renderChatList(); $('chatsMask').classList.remove('hidden'); }
+  function restoreCurrent(){
+    var s=currentSession();
+    $('chatLog').innerHTML=s.html||'';
+    state.aiHistory=(s.aiHistory||[]).slice();
+    state.context={lastItem:null,lastCategory:null,lastTopic:null,turns:0};
+    if(s.context){
+      state.context.lastItem=s.context.lastItem||null;
+      state.context.lastCategory=s.context.lastCategory||null;
+      state.context.lastTopic=s.context.lastTopic||null;
+      state.context.turns=s.context.turns||0;
+    }
+    $('welcome').style.display=s.hasChat?'none':'';
+    renderChatList(); scrollChat();
+  }
+  function loadSession(sid,skipPersist){
+    if(!skipPersist && sid!==sessions.currentId) persistCurrent();
+    var s=sessions.list.filter(function(x){return x.id===sid;})[0];
+    if(!s) return;
+    sessions.currentId=sid; saveSessions();
+    restoreCurrent(); switchTab('chat'); closeChats();
+  }
+  function newChat(){
+    persistCurrent();
+    var s=newSessionObj();
+    sessions.list.unshift(s); sessions.currentId=s.id; saveSessions();
+    $('chatLog').innerHTML=''; $('welcome').style.display='';
+    state.aiHistory=[]; state.context={lastItem:null,lastCategory:null,lastTopic:null,turns:0};
+    switchTab('chat'); closeChats(); renderChatList(); scrollChat();
+    toast('已新建对话');
+  }
+  function deleteChat(id){
+    if(sessions.list.length<=1){ toast('至少保留一个对话'); return; }
+    if(!window.confirm('删除这个对话？')) return;
+    sessions.list=sessions.list.filter(function(s){return s.id!==id;});
+    if(sessions.currentId===id){
+      sessions.currentId=sessions.list[0].id;
+      saveSessions(); loadSession(sessions.currentId,true);
+    }else{ saveSessions(); renderChatList(); }
+    toast('对话已删除');
+  }
+
   /* ---------- 初始化 ---------- */
   function init(){
     paintIcons();
@@ -447,6 +550,20 @@
       b.onclick=function(){ switchTab(b.getAttribute('data-tab')); };
     });
     $('kbSearch').addEventListener('input',function(){ state.search=this.value; renderItems(); });
+
+    $('btnNewChat').onclick=newChat;
+    $('drawerNewChat').onclick=newChat;
+    $('btnChats').onclick=openChats;
+    $('closeChats').onclick=closeChats;
+    $('chatsMask').addEventListener('click',function(e){ if(e.target===$('chatsMask')) closeChats(); });
+    $('chatList').onclick=function(e){
+      var del=e.target.closest('.chat-del');
+      if(del){ deleteChat(del.getAttribute('data-del')); return; }
+      var row=e.target.closest('.chat-row');
+      if(row) loadSession(row.getAttribute('data-id'));
+    };
+    bindChatDelegates();
+    restoreCurrent();
 
     $('btnSettings').onclick=function(){ window.HebauAI.openSettings(); };
     $('btnFeedback').onclick=function(){ $('settingsModal').classList.add('hidden'); openFeedback(); };
