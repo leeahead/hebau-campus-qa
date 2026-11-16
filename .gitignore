@@ -11,3 +11,7 @@ Thumbs.db
 # 本地预览截图等临时产物
 preview*.png
 _test_*.html
+
+# 内置发布通道工作目录与标记文件
+dist/
+*.genie
