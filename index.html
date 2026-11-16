@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>河北农业大学校园问答助手</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div class="app">
+  <!-- 侧边栏 -->
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-logo">农</div>
+      <div class="brand-text">
+        <div class="brand-title">校园问答助手</div>
+        <div class="brand-sub">河北农业大学 · 静态演示版</div>
+      </div>
+    </div>
+    <div class="side-search">
+      <input type="text" id="sideSearch" placeholder="搜索分类…" autocomplete="off">
+    </div>
+    <nav class="cat-list" id="catList"></nav>
+    <div class="side-foot">
+      <button class="btn-ghost" id="btnAiSettingsSide" style="margin-bottom:8px">⚙ AI 接口设置</button>
+      <button class="btn-ghost" id="btnFeedback">📝 试用反馈</button>
+      <div class="meta-line" id="kbMetaLine"></div>
+    </div>
+  </aside>
+
+  <!-- 主区 -->
+  <main class="main">
+    <header class="topbar">
+      <button class="icon-btn" id="menuBtn" aria-label="菜单">☰</button>
+      <div class="topbar-title" id="topTitle">智能问答</div>
+      <div class="topbar-actions">
+        <span class="badge" id="aiBadge">📚 本地检索模式</span>
+        <button class="icon-btn" id="btnAiSettings" title="AI 接口设置" aria-label="AI 接口设置">⚙</button>
+      </div>
+    </header>
+
+    <!-- 问答视图 -->
+    <section class="view" id="chatView">
+      <div class="chat-wrap">
+        <div class="chat-intro" id="chatIntro">
+          <div class="intro-logo">🌾</div>
+          <h1>有什么想了解的？直接问</h1>
+          <p>图书馆、宿舍、选课、缴费、处分、奖助、办事流程……都能查。<br>所有答案均来自学校官网，可点击查看来源与更新时间。</p>
+          <div class="chip-row" id="quickChips"></div>
+        </div>
+        <div class="chat-log" id="chatLog"></div>
+      </div>
+      <div class="composer">
+        <div class="composer-inner">
+          <input type="text" id="qInput" placeholder="例如：图书馆几点关门？作弊处分是什么？" autocomplete="off">
+          <button class="btn-send" id="btnSend">发送</button>
+        </div>
+        <div class="composer-tip">支持连续追问，如先问「图书馆」再问「周末开放吗」 · 本助手只回答官网可查的校园服务与学习生活问题</div>
+      </div>
+    </section>
+
+    <!-- 分类浏览视图 -->
+    <section class="view hidden" id="browseView">
+      <div class="browse-wrap" id="browseWrap"></div>
+    </section>
+
+    <!-- 条目详情视图 -->
+    <section class="view hidden" id="detailView">
+      <div class="detail-wrap" id="detailWrap"></div>
+    </section>
+  </main>
+</div>
+
+<!-- AI 接口设置弹窗 -->
+<div class="modal-mask hidden" id="aiModal">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <h3>⚙ AI 接口设置</h3>
+      <button class="icon-btn" id="closeAi">✕</button>
+    </div>
+    <p class="modal-desc">配置兼容 OpenAI 协议的接口，由 AI 主导问答（知识库作为事实依据注入）。配置仅保存在本机浏览器，不上传、不写入源码。</p>
+
+    <label class="switch-row"><span>启用 AI 模式</span><input type="checkbox" id="aiEnabled"></label>
+
+    <label>服务商预设</label>
+    <select id="aiProvider">
+      <option value="deepseek">DeepSeek</option>
+      <option value="qwen">通义千问（兼容模式）</option>
+      <option value="glm">智谱 GLM</option>
+      <option value="kimi">Moonshot Kimi</option>
+      <option value="openai">OpenAI</option>
+      <option value="custom">自定义 / 代理</option>
+    </select>
+    <div class="hint" id="aiPresetNote"></div>
+
+    <label>接口地址 Base URL</label>
+    <input type="text" id="aiBaseURL" placeholder="https://api.deepseek.com/v1">
+
+    <label>模型名称</label>
+    <input type="text" id="aiModel" placeholder="deepseek-chat">
+
+    <label>API Key</label>
+    <input type="password" id="aiKey" placeholder="sk-…（留空可用于自有代理）">
+
+    <div class="grid2">
+      <div><label>温度 temperature</label><input type="number" id="aiTemp" min="0" max="2" step="0.1" value="0.3"></div>
+      <div><label>检索条数 topK</label><input type="number" id="aiTopK" min="0" max="10" step="1" value="4"></div>
+    </div>
+
+    <div class="checks">
+      <label class="switch-row"><span>流式输出</span><input type="checkbox" id="aiStream"></label>
+      <label class="switch-row"><span>注入知识库（RAG）</span><input type="checkbox" id="aiUseKB"></label>
+    </div>
+    <label>超时（毫秒）</label>
+    <input type="number" id="aiTimeout" value="60000" min="10000" step="10000">
+
+    <div class="ai-security">
+      <strong>发布安全提示</strong>
+      <p>① 默认 BYOK：访客各填各的 Key，最安全。<br>
+      ② 若要用统一 Key，请把 Base URL 指向你自己的后端/云函数代理，由服务端保管 Key（此处 Key 可留空）。<br>
+      ③ 浏览器直连若报 CORS 错误，同样需要走代理。切勿把 Key 写进网页源码或随静态文件发布。</p>
+    </div>
+
+    <div class="modal-foot" style="justify-content:space-between">
+      <button class="btn-ghost" id="aiClear">清空配置</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn-ghost" id="aiTest">测试连接</button>
+        <button class="btn-primary" id="aiSave">保存设置</button>
+      </div>
+    </div>
+    <div class="fb-msg" id="aiTestMsg"></div>
+  </div>
+</div>
+
+<!-- 反馈弹窗 -->
+<div class="modal-mask hidden" id="feedbackModal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3>试用反馈</h3>
+      <button class="icon-btn" id="closeFeedback">✕</button>
+    </div>
+    <p class="modal-desc">你的反馈会保存在本机浏览器（演示版不上传服务器）。可评价答案、上报过时信息或提出新需求。</p>
+    <label>反馈类型</label>
+    <select id="fbType">
+      <option value="wrong">答案有误 / 已过时</option>
+      <option value="missing">没找到想要的信息</option>
+      <option value="suggest">功能建议</option>
+      <option value="other">其他</option>
+    </select>
+    <label>关联条目（可选）</label>
+    <input type="text" id="fbItem" placeholder="如 LIB-003，可留空">
+    <label>具体内容</label>
+    <textarea id="fbText" rows="4" placeholder="请描述你遇到的问题或建议…"></textarea>
+    <div class="modal-foot">
+      <button class="btn-ghost" id="fbExport">导出反馈 JSON</button>
+      <button class="btn-primary" id="fbSubmit">提交反馈</button>
+    </div>
+    <div class="fb-msg" id="fbMsg"></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="data/knowledge-base.js"></script>
+<script src="assets/ai.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
